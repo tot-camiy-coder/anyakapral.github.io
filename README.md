@@ -27,3 +27,6 @@
 ## Скриншоты 📸
 ![красивое фото 1](media/image-1.png)
 ![красивое фото 2](media/image.png)
+
+## На финалочку 
+Made with ❤️ by [@snowlover4ever](https://t.me/snowlover4ever)
