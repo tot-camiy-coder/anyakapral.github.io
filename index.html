@@ -206,6 +206,7 @@
     <script>
         const USE_IMAGES = false;
         const isMobile = window.innerWidth <= 768;
+        const MOBILE_TARGET_FPS = 25;
         
         const videoPlaylist = [
             "videos/videoplayback (1).webm",
@@ -251,24 +252,151 @@
 
         const videosPerStrip = isMobile ? 1 : 3;
 
+        class VideoCanvas {
+            constructor(videoSrc, width, height) {
+                this.width = width;
+                this.height = height;
+                
+                this.canvas = document.createElement('canvas');
+                this.canvas.width = width;
+                this.canvas.height = height;
+                this.canvas.className = 'thumb';
+                this.ctx = this.canvas.getContext('2d', { 
+                    alpha: false,
+                    desynchronized: true
+                });
+                
+                this.video = document.createElement('video');
+                this.video.src = videoSrc;
+                this.video.autoplay = true;
+                this.video.muted = true;
+                this.video.loop = true;
+                this.video.playsInline = true;
+                this.video.preload = 'metadata';
+                
+                this.frameInterval = 1000 / MOBILE_TARGET_FPS;
+                this.lastFrameTime = 0;
+                this.isVisible = true;
+                this.animationId = null;
+                
+                this.video.addEventListener('loadeddata', () => {
+                    this.startDrawing();
+                });
+                
+                this.video.addEventListener('error', () => {
+                    this.drawFallbackGradient();
+                });
+            }
+            
+            drawFrame() {
+                if (!this.video.videoWidth || !this.video.videoHeight) return;
+                
+                const videoRatio = this.video.videoWidth / this.video.videoHeight;
+                const canvasRatio = this.width / this.height;
+                
+                let srcX = 0, srcY = 0, srcW = this.video.videoWidth, srcH = this.video.videoHeight;
+                
+                if (videoRatio > canvasRatio) {
+                    srcW = this.video.videoHeight * canvasRatio;
+                    srcX = (this.video.videoWidth - srcW) / 2;
+                } else {
+                    srcH = this.video.videoWidth / canvasRatio;
+                    srcY = (this.video.videoHeight - srcH) / 2;
+                }
+                
+                this.ctx.drawImage(
+                    this.video,
+                    srcX, srcY, srcW, srcH,
+                    0, 0, this.width, this.height
+                );
+            }
+            
+            drawFallbackGradient() {
+                const gradient = this.ctx.createLinearGradient(0, 0, this.width, this.height);
+                gradient.addColorStop(0, '#667eea');
+                gradient.addColorStop(1, '#764ba2');
+                this.ctx.fillStyle = gradient;
+                this.ctx.fillRect(0, 0, this.width, this.height);
+            }
+            
+            startDrawing() {
+                const draw = (currentTime) => {
+                    if (!this.isVisible) {
+                        this.animationId = requestAnimationFrame(draw);
+                        return;
+                    }
+                    
+                    const elapsed = currentTime - this.lastFrameTime;
+                    
+                    if (elapsed >= this.frameInterval) {
+                        this.drawFrame();
+                        this.lastFrameTime = currentTime - (elapsed % this.frameInterval);
+                    }
+                    
+                    this.animationId = requestAnimationFrame(draw);
+                };
+                
+                this.animationId = requestAnimationFrame(draw);
+            }
+            
+            setVisible(visible) {
+                this.isVisible = visible;
+                if (visible) {
+                    this.video.play().catch(() => {});
+                } else {
+                    this.video.pause();
+                }
+            }
+            
+            destroy() {
+                if (this.animationId) {
+                    cancelAnimationFrame(this.animationId);
+                }
+                this.video.pause();
+                this.video.src = '';
+            }
+            
+            getElement() {
+                return this.canvas;
+            }
+        }
+
+        const videoCanvases = [];
+
+        function getThumbDimensions() {
+            if (window.innerWidth <= 480) {
+                return { width: 480, height: 250 };
+            } else if (window.innerWidth <= 768) {
+                return { width: 700, height: 500 };
+            }
+            return { width: 560, height: 400 };
+        }
+
         function createThumb(src, index) {
             if (USE_IMAGES) {
                 const div = document.createElement('div');
                 div.className = 'thumb';
                 div.style.background = gradients[index % gradients.length];
                 return div;
-            } else {
-                const video = document.createElement('video');
-                video.src = src;
-                video.autoplay = true;
-                video.muted = true;
-                video.loop = true;
-                video.playsInline = true;
-                video.preload = 'none';
-                video.className = 'thumb';
-                video.loading = 'lazy';
-                return video;
             }
+            
+            if (isMobile) {
+                const { width, height } = getThumbDimensions();
+                const videoCanvas = new VideoCanvas(src, width, height);
+                videoCanvases.push(videoCanvas);
+                return videoCanvas.getElement();
+            }
+            
+            const video = document.createElement('video');
+            video.src = src;
+            video.autoplay = true;
+            video.muted = true;
+            video.loop = true;
+            video.playsInline = true;
+            video.preload = 'none';
+            video.className = 'thumb';
+            video.loading = 'lazy';
+            return video;
         }
 
         function generateVideoBackground() {
@@ -296,7 +424,19 @@
                 container.appendChild(strip);
             });
             
-            if (!USE_IMAGES) {
+            if (isMobile && videoCanvases.length > 0) {
+                const observer = new IntersectionObserver((entries) => {
+                    entries.forEach(entry => {
+                        const canvas = entry.target;
+                        const videoCanvas = videoCanvases.find(vc => vc.canvas === canvas);
+                        if (videoCanvas) {
+                            videoCanvas.setVisible(entry.isIntersecting);
+                        }
+                    });
+                }, { threshold: 0.1 });
+                
+                videoCanvases.forEach(vc => observer.observe(vc.canvas));
+            } else if (!USE_IMAGES && !isMobile) {
                 const videos = container.querySelectorAll('video');
                 const observer = new IntersectionObserver((entries) => {
                     entries.forEach(entry => {
